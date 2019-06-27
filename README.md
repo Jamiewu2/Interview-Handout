@@ -1,2 +1,9 @@
 # InterviewHandout
-Repo containing material for backend interview
+
+Question: The ETL team at Maestro manages several python jobs that run at various intervals. For various reasons, we may not want multiple of the same job running for a given client at any given time. For example, we may not want two workers to be running “sync job” for Test Company concurrently. Implement a system using a subset of Database operations defined below, that can achieve this goal. Note that this control exists within the workers themselves, so we have provided a sample worker where you may use your solution.
+
+In worker.py, we have a simple python script that will write 'Maestro is the best......' to output.txt.
+In starter_code.py, we run this worker 5 times on different threads.
+In test_output.py we have a simple test to verify the correctness of the output. Basically, we want the text from above to be written several times, separated by 2 newlines each time. Note that this may be fewer than 5 times, as the workers are designed to crash with some probability.
+
+If you run the given code, you will see that there is a concurrency issue, as multiple workers write to the file at the same time, interleaving the chunks of text. Using the fake database functions in mock_db.py, come up with a system to control the execution of workers so that the concurrency is handled correctly. Do not change the main function in starter_code. You will only need to modify attempt_run_worker. Furthermore, this should be accomplished by running the script once. That is, it should handle all failures appropriately and run all subsequent workers. This is intentionally left a little open-ended, so feel free to reach out to the team at MaestroQA with any questions.
