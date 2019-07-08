@@ -1,3 +1,10 @@
+"""
+    DO NOT MODIFY
+
+    A script to test whether the contents of output.txt match the expected value
+    produced by a valid solution
+"""
+
 with open('./output.txt', 'r') as file:
     contents = file.read()
     lines = contents.split('\n\n')

@@ -1,3 +1,9 @@
+"""
+    DO NOT MODIFY
+
+    An in-memory store to mimic some operations available in PyMongo
+"""
+
 from time import sleep
 
 class DB:
@@ -7,6 +13,7 @@ class DB:
 
     """
         Helper function for shared functionality of find one and many
+        Externally, use find_one or find_many
     """
     def _find(self, obj, many=False):
         if not type(obj) is dict:
@@ -27,6 +34,13 @@ class DB:
 
     """
         Returns the number of documents matching the query obj
+
+        Args
+            obj: a dict representing a filter on exact matches in the store
+            Ex: { key1: value1, key2: value2, ...}
+
+        Returns
+            an integer representing how many objects in store match filter
     """
     def count(self, obj):
         if not type(obj) is dict:
@@ -42,15 +56,23 @@ class DB:
         return count
 
     """
-        Object is in form { key1: value1, key2: value2, ...}
-        Returns all entries with all of these
+        Args:
+            obj: a dict representing a filter on exact matches in the store
+            Ex: { key1: value1, key2: value2, ...}
+
+        Returns:
+            An array of objects that match the filter
     """
     def find_many(self, obj):
         return self._find(obj, True)
 
     """
-        Object is in form { key1: value1, key2: value2, ...}
-        Returns one entry with all of these
+        Args:
+            obj: a dict representing a filter on exact matches in the store
+            Ex: { key1: value1, key2: value2, ...}
+
+        Returns:
+            A object that matches the filter or None
     """
     def find_one(self, obj):
         return self._find(obj, False)
@@ -78,6 +100,10 @@ class DB:
         Insert puts an object into the store
         It must contain an _id field, as the internal data structure
         is a dictionary with key=_id
+
+        Args:
+            obj: a dict representing a filter on exact matches in the store
+            Ex: { key1: value1, key2: value2, ...}
     """
     def insert_one(self, obj):
         if not type(obj) is dict:
@@ -114,18 +140,33 @@ class DB:
             del self.store[key]
 
     """
-        Object is in form { key1: value1, key2: value2, ...}
-        Deletes an entry with all of these
+        Deletes one entry that matches provided filters
+
+        Args:
+            obj: a dict representing a filter on exact matches in the store
+            Ex: { key1: value1, key2: value2, ...}
     """
     def delete_one(self, obj):
         self._delete(obj)
 
     """
-        Object is in form { key1: value1, key2: value2, ...}
-        Deletes all entries with all of these
+        Deletes all entries that match provided filters
+
+        Args:
+            obj: a dict representing a filter on exact matches in the store
+            Ex: { key1: value1, key2: value2, ...}
     """
     def delete_many(self, obj):
         self._delete(obj, many=True)
+
+    """
+        Update one object that matches provided filter
+
+        Args:
+            obj: a dict representing a filter on exact matches in the store
+                Ex: { key1: value1, key2: value2, ...}
+            update: a dict representing new key values for matches
+    """
 
     def update_one(self, obj_filter, update):
         for key, value in self.store.items():
@@ -138,6 +179,14 @@ class DB:
                     self.store[key][prop_key] = new_value
             return self.store[key]
 
+    """
+        Update all objects that matches provided filter
+        
+        Args:
+            obj: a dict representing a filter on exact matches in the store
+                Ex: { key1: value1, key2: value2, ...}
+            update: a dict representing new key values for matches
+    """
     def update_many(self, obj_filter, update):
         for key, value in self.store.items():
             matches = []
