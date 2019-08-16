@@ -177,7 +177,7 @@ class DB:
             if matched:
                 for prop_key, new_value in update.items():
                     self.store[key][prop_key] = new_value
-            return self.store[key]
+            	return self.store[key]
 
     """
         Update all objects that matches provided filter
