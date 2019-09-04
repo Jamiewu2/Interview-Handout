@@ -5,6 +5,7 @@
 """
 
 from time import sleep
+import random
 
 class DB:
 
@@ -121,7 +122,7 @@ class DB:
         if '_id' not in obj:
             raise Exception("DB Object must provide _id key")
         # simulate network latency
-        sleep(0.2)
+        sleep(random.random())
         key = obj['_id']
         if key in self.store:
             raise Exception("DuplicateKeyError")
@@ -193,7 +194,7 @@ class DB:
             if matched:
                 for prop_key, new_value in update.items():
                     self.store[key][prop_key] = new_value
-            	return self.store[key]
+                return self.store[key]
 
 
     def update_many(self, obj_filter, update):

@@ -8,11 +8,11 @@ Implement a locking system using the database operations defined in mock_db.py, 
 
 ### Files:
 
-In *starter_code.py*, we run worker.py 5 times on different threads. This is to simulate the queuing of worker jobs for a particular client [absent from the code]. This should be the only file you edit.
+In *starter_code.py*, we run worker.py 25 times on different threads. This is to simulate the queuing of worker jobs for a particular client [absent from the code]. This should be the only file you edit.
 
 In *worker.py*, we have a simple python script that will write 'Maestro is the best......' to output.txt. This is to act as the worker we wish to run for a particular client.
 
-In *test_output.py* we have a simple test to verify the correctness of the output. We want the text from above to be written several times, separated by 2 newlines each time. Note that this may be fewer than 5 times, as the workers are designed to crash with some probability. Note: Be sure to remove the contents of output.txt after an unsuccessful run, as this could impact subsequent runs of the test script.
+In *test_output.py* we have a simple test to verify the correctness of the output. We want the text from above to be written several times, separated by 2 newlines each time. Note that this may be fewer than 25 times, as the workers are designed to crash with some probability. Note: Be sure to remove the contents of output.txt after an unsuccessful run, as this could impact subsequent runs of the test script.
 
 In *mock_db.py* there are several functions that you can use in your code that will help simulate database calls similar to a real system. This file is only here to provide functionality and should not be edited.
 
