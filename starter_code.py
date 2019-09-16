@@ -44,7 +44,7 @@ if __name__ == "__main__":
     db = mock_db.DB()
     threads = []
     for _ in range(25):
-        t = Thread(target=attempt_run_worker, args=(uuid.uuid4(), 2000, db, 0.1))
+        t = Thread(target=attempt_run_worker, args=(uuid.uuid1(), 2000, db, 0.1))
         threads.append(t)
     for t in threads:
         t.start()
