@@ -3,7 +3,7 @@ from typing import List
 import mock_db
 import uuid
 from worker import worker_main
-from threading import Thread
+from threading import Thread, get_ident
 import time
 import logging as log
 from dataclasses import dataclass, asdict, field
@@ -12,6 +12,7 @@ from mashumaro import DataClassDictMixin
 
 root = log.getLogger()
 root.setLevel(log.DEBUG)
+
 
 class JobStatus(Enum):
     PENDING = "pending"
@@ -52,6 +53,33 @@ class JobQueue(DataClassDictMixin):
 # we can just submit, and consume jobs "at random". This might lead to starvation, but all the jobs have to run anyway
 # this would assume db.find is deterministic
 
+# lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
+# delete lock field when done
+# hey look it worked
+
+def single_threaded(func):
+    def decorator(*args, **kwargs):
+        db = args[0]  # todo hack, assume db is first arg
+
+        while 1:
+            try:
+                db.insert_one({'_id': "lock"})
+                log.debug(f"thread: {get_ident()} got in")
+                break
+            except Exception as e:
+                #todo retry until timeout
+                time.sleep(0.1)
+                pass
+
+        try:
+            func(*args, **kwargs)
+        finally:
+            db.delete_one({'_id': "lock"})
+
+    return decorator
+
+
+@single_threaded
 def add_to_queue(db, worker_hash):
     job = Job(worker_hash)
     job_queue_key = JobQueue.job_queue_key()
@@ -109,8 +137,8 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
     add_to_queue(db, worker_hash)
 
     print(db.store)
-    time.sleep(1)
-    remove_from_queue(db, worker_hash, JobStatus.SUCCESS)
+    print(len(db.store['job_queue']['jobs']))
+    time.sleep(100)  # TODO delete
 
     current_time = 0
     while current_time < give_up_after:
