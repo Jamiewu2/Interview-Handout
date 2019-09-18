@@ -1,13 +1,43 @@
+from typing import List
+
 import mock_db
 import uuid
 from worker import worker_main
 from threading import Thread
 import time
 import logging as log
-
+from dataclasses import dataclass, asdict, field
+from enum import Enum
+from mashumaro import DataClassDictMixin
 
 root = log.getLogger()
 root.setLevel(log.DEBUG)
+
+class JobStatus(Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+@dataclass
+class Job(DataClassDictMixin):
+    """DB Representation of a Job"""
+    # todo add some metrics, like job submit time, job run time
+    _id: str
+    status: JobStatus = JobStatus.PENDING
+    error_message: str = None  # if a job fails, put the error message here
+
+
+@dataclass
+class JobQueue(DataClassDictMixin):
+    _id: str = "job_queue"
+    jobs: List[Job] = field(default_factory=list)
+    version: int = 1  # if we get wayyyyy too many jobs this will overflow
+
+    @staticmethod
+    def job_queue_key():
+        return {"_id": "job_queue"}
 
 
 # So essentially, we need to add worker jobs to a queue in mock_db,
@@ -18,40 +48,40 @@ root.setLevel(log.DEBUG)
 # when a worker job is done, or crashed, it should be removed from the queue
 #    - should add a status message in mock_db indicating if the job failed or not
 
+# so as it turns out, keeping a queue seems really hard without some database-side concurrency locks
+# we can just submit, and consume jobs "at random". This might lead to starvation, but all the jobs have to run anyway
+# this would assume db.find is deterministic
 
-#
-# WHOOPS, can't use threading primitives, as these workers would actually be on many different machines in practice
+def add_to_queue(db, worker_hash):
+    job = Job(worker_hash)
+    job_queue_key = JobQueue.job_queue_key()
 
-# global_lock = Lock()
-#
-#
-#
-# def single_threaded(func):
-#     """
-#     Decorator that surrounds a method with a blocking lock
-#
-#     :param func: the func to run single threaded
-#     """
-#
-#     single_threaded_lock = Lock()
-#     log.debug(f"single_threaded_lock for func: {func}")
-#
-#     def decorator(*args, **kwargs):
-#         single_threaded_lock.acquire()
-#         log.debug(f"got lock, worker_hash: {get_ident()} for func: {func}")
-#         try:
-#             ret_val = func(*args, **kwargs)
-#         finally:
-#             single_threaded_lock.release()
-#             log.debug(f"released lock, worker_hash: {get_ident()} for func: {func}")
-#
-#         return ret_val
-#
-#     return decorator
-#
-#
-# @single_threaded
-def lock_is_free(worker_hash, db):
+    job_queue_dict = db.find_one(job_queue_key)
+
+    if not job_queue_dict:
+        job_queue = JobQueue()
+        job_queue.jobs.append(job)
+
+        db.insert_one(job_queue.to_dict())
+    else:
+        job_queue = JobQueue.from_dict(job_queue_dict)
+        job_queue.jobs.append(job)
+
+        db.update_one(job_queue_key, job_queue.to_dict())
+
+
+#todo hide, should use updates instead
+def remove_from_queue(db, worker_hash, status):
+    # db.delete_one({"_id": worker_hash})
+
+    pass
+
+
+def update_job_failed(db, job, error_message):
+    pass
+
+
+def lock_is_free():
     """
         CHANGE ME, POSSIBLY MY ARGS
 
@@ -60,14 +90,6 @@ def lock_is_free(worker_hash, db):
 
     return True
 
-
-def retry(func, give_up_after, retry_interval):
-
-    def decorator():
-        pass
-
-
-    return decorator
 
 def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
     """
@@ -83,6 +105,12 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
                             until the lock is free, unless we have been trying for more
                             than give_up_after seconds
     """
+
+    add_to_queue(db, worker_hash)
+
+    print(db.store)
+    time.sleep(1)
+    remove_from_queue(db, worker_hash, JobStatus.SUCCESS)
 
     current_time = 0
     while current_time < give_up_after:
