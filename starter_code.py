@@ -11,7 +11,22 @@ from enum import Enum
 from mashumaro import DataClassDictMixin
 
 root = log.getLogger()
-root.setLevel(log.DEBUG)
+root.setLevel(log.INFO)
+
+
+# So essentially, we need to add worker jobs to a queue in mock_db,
+# Worker created: add to end of queue
+# lock_is_free should check if you are at the beginning of the queue. false otherwise
+#    - generally though, you would want multiple workers to be able to run concurrently?
+#        - I guess that's a different problem
+# when a worker job is done, or crashed, it should be removed from the queue
+#    - should add a status message in mock_db indicating if the job failed or not
+#    - Assumption: currently attempting to restart jobs that crash
+
+# lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
+# delete lock field when done
+
+# this works, but the entire queue is just one item, need to refactor
 
 
 class JobStatus(Enum):
@@ -34,89 +49,138 @@ class Job(DataClassDictMixin):
 class JobQueue(DataClassDictMixin):
     _id: str = "job_queue"
     jobs: List[Job] = field(default_factory=list)
-    version: int = 1  # if we get wayyyyy too many jobs this will overflow
 
     @staticmethod
     def job_queue_key():
         return {"_id": "job_queue"}
 
 
-# So essentially, we need to add worker jobs to a queue in mock_db,
-# Worker created: add to end of queue
-# lock_is_free should check if you are at the beginning of the queue. false otherwise
-#    - generally though, you would want multiple workers to be able to run concurrently?
-#        - I guess that's a different problem
-# when a worker job is done, or crashed, it should be removed from the queue
-#    - should add a status message in mock_db indicating if the job failed or not
+def parametrized(dec):
+    """
+    Meta-decorator that allows you to have decorators with parameters
+    :param dec:
+    :return:
+    """
+    def layer(*args, **kwargs):
+        def repl(f):
+            return dec(f, *args, **kwargs)
+        return repl
+    return layer
 
-# so as it turns out, keeping a queue seems really hard without some database-side concurrency locks
-# we can just submit, and consume jobs "at random". This might lead to starvation, but all the jobs have to run anyway
-# this would assume db.find is deterministic
 
-# lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
-# delete lock field when done
-# hey look it worked
+@parametrized
+def single_threaded(func, lock_key):
+    """
+    lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
+    delete lock field when done
 
-def single_threaded(func):
+    Pessimistic Locking Decorator. Use to ensure only a function is called only once
+    Make sure you don't attempt to lock the same lock within that function, will lead to deadlock
+
+    Args:
+        lock_key: the keyword to use to lock a database transaction
+    """
     def decorator(*args, **kwargs):
         db = args[0]  # todo hack, assume db is first arg
 
         while 1:
             try:
-                db.insert_one({'_id': "lock"})
+                db.insert_one({'_id': lock_key})
                 log.debug(f"thread: {get_ident()} got in")
                 break
             except Exception as e:
                 #todo retry until timeout
                 time.sleep(0.1)
-                pass
 
         try:
             func(*args, **kwargs)
         finally:
-            db.delete_one({'_id': "lock"})
+            db.delete_one({'_id': lock_key})
 
     return decorator
 
 
-@single_threaded
-def add_to_queue(db, worker_hash):
-    job = Job(worker_hash)
-    job_queue_key = JobQueue.job_queue_key()
+DATABASE_LOCK_KEY = "database_lock_key"
 
+
+@single_threaded(DATABASE_LOCK_KEY)
+def init_queue(db):
+    """
+    Optimally, would just create the queue in a pre-process step
+    :param db:
+    :return:
+    """
+    job_queue_key = JobQueue.job_queue_key()
     job_queue_dict = db.find_one(job_queue_key)
 
     if not job_queue_dict:
         job_queue = JobQueue()
-        job_queue.jobs.append(job)
-
         db.insert_one(job_queue.to_dict())
-    else:
-        job_queue = JobQueue.from_dict(job_queue_dict)
-        job_queue.jobs.append(job)
-
-        db.update_one(job_queue_key, job_queue.to_dict())
 
 
-#todo hide, should use updates instead
-def remove_from_queue(db, worker_hash, status):
-    # db.delete_one({"_id": worker_hash})
+def _get_queue_from_db(db) -> JobQueue:
+    """
+    :param db: mock_db
+    :return: the job queue from the db, or raise an exception is the job queue is not initialized
+    """
+    job_queue_key = JobQueue.job_queue_key()
+    job_queue_dict = db.find_one(job_queue_key)
+    if not job_queue_dict:
+        raise Exception("job queue not initialized")
 
-    pass
+    return JobQueue.from_dict(job_queue_dict)
+
+
+@single_threaded(DATABASE_LOCK_KEY)
+def add_to_queue(db, worker_hash):
+    job = Job(worker_hash)
+    job_queue = _get_queue_from_db(db)
+    job_queue_key = JobQueue.job_queue_key()
+
+    job_queue.jobs.append(job)
+    db.update_one(job_queue_key, job_queue.to_dict())
+
+
+#todo should use updates instead, use job_status
+@single_threaded(DATABASE_LOCK_KEY)
+def remove_from_queue(db, worker_hash, job_status):
+    job = Job(worker_hash)
+    job_queue = _get_queue_from_db(db)
+    job_queue_key = JobQueue.job_queue_key()
+
+    job_queue.jobs.remove(job)
+    db.update_one(job_queue_key, job_queue.to_dict())
 
 
 def update_job_failed(db, job, error_message):
     pass
 
 
-def lock_is_free():
+def lock_is_free(db, worker_hash):
     """
         CHANGE ME, POSSIBLY MY ARGS
 
         Return whether the lock is free
     """
 
-    return True
+    job_queue = _get_queue_from_db(db)
+    if job_queue.jobs[0]._id == worker_hash:
+        return True
+
+    return False
+
+
+def write_line(file_name, line):
+    """
+        Function to write the provided text to the provided file in append mode
+
+        Args:
+            file_name: the file to which to write the text
+            line: text to write to the file
+    """
+
+    with open(file_name, 'a') as f:
+        f.write(line)
 
 
 def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
@@ -134,27 +198,33 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
                             than give_up_after seconds
     """
 
+    log.info("start")
+
+    init_queue(db)
     add_to_queue(db, worker_hash)
 
-    print(db.store)
-    print(len(db.store['job_queue']['jobs']))
-    time.sleep(100)  # TODO delete
+    num_jobs = len(db.store['job_queue']['jobs'])
+    log.info(f"added job, currently {num_jobs} in queue")
 
     current_time = 0
     while current_time < give_up_after:
         try:
-            if lock_is_free():
+            if lock_is_free(db, worker_hash):
+                log.info(f"running job: {worker_hash}")
                 worker_main(worker_hash, db)
+                remove_from_queue(db, worker_hash, JobStatus.SUCCESS)
+                write_line("output.txt", "")
                 return
         except Exception as e:
             log.exception(f"Error occurred in worker: `{worker_hash}`. Retrying after {retry_interval} seconds.", e)
-            pass
 
-        log.info(f"{worker_hash} crashed: retrying after {retry_interval} seconds")
+        log.debug(f"{worker_hash}: retrying after {retry_interval} seconds")
         current_time += retry_interval
         time.sleep(retry_interval)
 
     log.info(f"Timeout reached for worker: {worker_hash}, giving up")
+    remove_from_queue(db, worker_hash, JobStatus.FAILED)
+    write_line("output.txt", "")
 
 
 if __name__ == "__main__":
