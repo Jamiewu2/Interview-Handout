@@ -26,7 +26,16 @@ root.setLevel(log.INFO)
 # lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
 # delete lock field when done
 
-# this works, but the entire queue is just one item, need to refactor
+# current implementation works, but the entire queue is just one item
+
+# INITIAL IDEA
+# alternatively, I could submit all jobs as separate documents with a timestamp
+# when checking if lock_is_free, use a find operation to get the oldest document that is still `JobStatus.PENDING`
+# my concern is that time across multiple machines (as the jobs would be in a real-world example) could have off sync clocks
+# meaning a job could possibly be inserted into the front of the queue after a job has started running
+#     - unless you lock both the find operation, and the insert operation under the same lock, which kind of defeats the purpose of this design
+# thus, adding a timestamp would have to be implemented database side I would think
+# though, since this code snippet is all running on a single machine, it would probably work
 
 
 class JobStatus(Enum):
