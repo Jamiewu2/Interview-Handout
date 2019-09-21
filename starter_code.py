@@ -213,7 +213,7 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
     add_to_queue(db, worker_hash)
 
     num_jobs = len(db.store['job_queue']['jobs'])
-    log.info(f"added job, currently {num_jobs} in queue")
+    log.info(f"added job: {worker_hash}, currently {num_jobs} in queue")
 
     current_time = 0
     while current_time < give_up_after:
@@ -225,7 +225,11 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
                 write_line("output.txt", "")
                 return
         except Exception as e:
-            log.exception(f"Error occurred in worker: `{worker_hash}`. Retrying after {retry_interval} seconds.", e)
+            log.exception(f"Error occurred in worker: `{worker_hash}`, retrying after {retry_interval} seconds", e)
+            remove_from_queue(db, worker_hash, JobStatus.FAILED)
+            write_line("output.txt", "")
+            return
+
 
         log.debug(f"{worker_hash}: retrying after {retry_interval} seconds")
         current_time += retry_interval
