@@ -15,28 +15,17 @@ root = log.getLogger()
 root.setLevel(log.INFO)
 
 
-# So essentially, we need to add worker jobs to a queue in mock_db,
-# Worker created: add to end of queue
-# lock_is_free should check if you are at the beginning of the queue. false otherwise
-#    - generally though, you would want multiple workers to be able to run concurrently?
-#        - I guess that's a different problem
-# when a worker job is done, or crashed, it should be removed from the queue
-#    - should add a status message in mock_db indicating if the job failed or not
-#    - Assumption: currently attempting to restart jobs that crash
-
-# lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
-# delete lock field when done
-
-# current implementation works, but the entire queue is just one item
-
-# INITIAL IDEA
-# alternatively, I could submit all jobs as separate documents with a timestamp
+# IDEA
+# I would submit all jobs as separate documents with a timestamp
 # when checking if lock_is_free, use a find operation to get the oldest document that is still `JobStatus.PENDING`
 # my concern is that time across multiple machines (as the jobs would be in a real-world example) could have off sync clocks
 # meaning a job could possibly be inserted into the front of the queue after a job has started running
 #     - unless you lock both the find operation, and the insert operation under the same lock, which kind of defeats the purpose of this design
 # thus, adding a timestamp would have to be implemented database side I would think
 # though, since this code snippet is all running on a single machine, it would probably work
+
+# lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
+# delete the lock field when done
 
 
 class JobStatus(Enum):
@@ -72,9 +61,6 @@ def parametrized(dec):
 @parametrized
 def single_threaded(func, lock_key):
     """
-    lock idea, blindly attempt to create lock field, if it exists, you'll get DuplicateKeyError
-    delete lock field when done
-
     Pessimistic Locking Decorator. Use to ensure only a function is called only once
     Make sure you don't attempt to lock the same lock within that function, will lead to deadlock
 
@@ -145,6 +131,7 @@ def lock_is_free(db, worker_hash):
 
     return False
 
+
 def write_line(file_name, line):
     """
         Function to write the provided text to the provided file in append mode
@@ -190,7 +177,7 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
                 return
 
         except Exception as e:
-            log.exception(f"Error occurred in worker: `{worker_hash}`. Retrying after {retry_interval} seconds.", e)
+            log.exception(f"Error occurred in worker: `{worker_hash}`.", e)
             update_job(db, worker_hash, JobStatus.FAILED, repr(e))
             write_line("output.txt", "")
             return
