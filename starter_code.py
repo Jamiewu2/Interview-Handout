@@ -9,6 +9,7 @@ import logging as log
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 from mashumaro import DataClassDictMixin
+from datetime import datetime
 
 root = log.getLogger()
 root.setLevel(log.INFO)
@@ -48,20 +49,11 @@ class JobStatus(Enum):
 @dataclass
 class Job(DataClassDictMixin):
     """DB Representation of a Job"""
-    # todo add some metrics, like job submit time, job run time
     _id: str
+    job_submit_time: float
+    job_run_time: float = None
     status: JobStatus = JobStatus.PENDING
     error_message: str = None  # if a job fails, put the error message here
-
-
-@dataclass
-class JobQueue(DataClassDictMixin):
-    _id: str = "job_queue"
-    jobs: List[Job] = field(default_factory=list)
-
-    @staticmethod
-    def job_queue_key():
-        return {"_id": "job_queue"}
 
 
 def parametrized(dec):
@@ -112,57 +104,29 @@ def single_threaded(func, lock_key):
 DATABASE_LOCK_KEY = "database_lock_key"
 
 
-@single_threaded(DATABASE_LOCK_KEY)
-def init_queue(db):
-    """
-    Optimally, would just create the queue in a pre-process step
-    :param db:
-    :return:
-    """
-    job_queue_key = JobQueue.job_queue_key()
-    job_queue_dict = db.find_one(job_queue_key)
-
-    if not job_queue_dict:
-        job_queue = JobQueue()
-        db.insert_one(job_queue.to_dict())
-
-
-def _get_queue_from_db(db) -> JobQueue:
-    """
-    :param db: mock_db
-    :return: the job queue from the db, or raise an exception is the job queue is not initialized
-    """
-    job_queue_key = JobQueue.job_queue_key()
-    job_queue_dict = db.find_one(job_queue_key)
-    if not job_queue_dict:
-        raise Exception("job queue not initialized")
-
-    return JobQueue.from_dict(job_queue_dict)
+def _get_job_from_db(db, worker_hash) -> Job:
+    job_dict = db.find_one({'_id': worker_hash})
+    if not job_dict:
+        raise Exception(f"job: {worker_hash} not found")
+    return Job.from_dict(job_dict)
 
 
 @single_threaded(DATABASE_LOCK_KEY)
 def add_to_queue(db, worker_hash):
-    job = Job(worker_hash)
-    job_queue = _get_queue_from_db(db)
-    job_queue_key = JobQueue.job_queue_key()
+    timestamp = datetime.now().timestamp()
 
-    job_queue.jobs.append(job)
-    db.update_one(job_queue_key, job_queue.to_dict())
+    job = Job(worker_hash, timestamp)
+    db.insert_one(job.to_dict())
 
 
-#todo should use updates instead, use job_status
-@single_threaded(DATABASE_LOCK_KEY)
-def remove_from_queue(db, worker_hash, job_status):
-    job = Job(worker_hash)
-    job_queue = _get_queue_from_db(db)
-    job_queue_key = JobQueue.job_queue_key()
+def update_job(db, worker_hash, job_status, error_message=None):
+    job = _get_job_from_db(db, worker_hash)
+    job.status = job_status
+    job.job_run_time = datetime.now().timestamp() - job.job_submit_time
+    if error_message:
+        job.error_message = error_message
 
-    job_queue.jobs.remove(job)
-    db.update_one(job_queue_key, job_queue.to_dict())
-
-
-def update_job_failed(db, job, error_message):
-    pass
+    db.update_one({'_id': job._id}, job.to_dict())
 
 
 def lock_is_free(db, worker_hash):
@@ -171,13 +135,15 @@ def lock_is_free(db, worker_hash):
 
         Return whether the lock is free
     """
+    jobs = db.find_many({"status": JobStatus.PENDING.value})
+    jobs = map(Job.from_dict, jobs)
 
-    job_queue = _get_queue_from_db(db)
-    if job_queue.jobs[0]._id == worker_hash:
-        return True
+    if jobs:
+        first_job = sorted(jobs, key=lambda job: job.job_submit_time)[0]
+        if first_job._id == worker_hash:
+            return True
 
     return False
-
 
 def write_line(file_name, line):
     """
@@ -209,11 +175,8 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
 
     log.info("start")
 
-    init_queue(db)
     add_to_queue(db, worker_hash)
-
-    num_jobs = len(db.store['job_queue']['jobs'])
-    log.info(f"added job, currently {num_jobs} in queue")
+    log.info(f"added: {worker_hash} to queue")
 
     current_time = 0
     while current_time < give_up_after:
@@ -221,18 +184,23 @@ def attempt_run_worker(worker_hash, give_up_after, db, retry_interval):
             if lock_is_free(db, worker_hash):
                 log.info(f"running job: {worker_hash}")
                 worker_main(worker_hash, db)
-                remove_from_queue(db, worker_hash, JobStatus.SUCCESS)
+                update_job(db, worker_hash, JobStatus.SUCCESS)
                 write_line("output.txt", "")
+                print(db.store)
                 return
+
         except Exception as e:
             log.exception(f"Error occurred in worker: `{worker_hash}`. Retrying after {retry_interval} seconds.", e)
+            update_job(db, worker_hash, JobStatus.FAILED, repr(e))
+            write_line("output.txt", "")
+            return
 
         log.debug(f"{worker_hash}: retrying after {retry_interval} seconds")
         current_time += retry_interval
         time.sleep(retry_interval)
 
     log.info(f"Timeout reached for worker: {worker_hash}, giving up")
-    remove_from_queue(db, worker_hash, JobStatus.FAILED)
+    update_job(db, worker_hash, JobStatus.FAILED, "Timeout reached")
     write_line("output.txt", "")
 
 
